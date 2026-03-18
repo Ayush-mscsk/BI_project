@@ -60,9 +60,11 @@ The dashboard includes:
 
 - Sidebar filters (date, category, region, payment method)
 - Data quality summary panel (invalid, dropped, and imputed rows)
-- Executive KPI row
-- Monthly trend and segment analysis tabs
-- Discount analysis and correlation heatmap
+- Executive KPI row with trend chart (historical + 3-month forecast overlay)
+- Monthly revenue forecasting with exponential smoothing
+- Dynamic insights (key factors, anomalies, forecast predictions)
+- Product & Customer analysis with revenue/orders toggle
+- Discount analysis with yield breakdown
 - Filtered data export to CSV
 
 ## Generate Automated Report
@@ -94,8 +96,13 @@ This creates:
 - How do discount bands affect units sold and revenue?
 - Which payment methods contribute most to revenue?
 
+## Recent Enhancements
+
+✓ **Forecast Models** - Added 3-month revenue forecasts using exponential smoothing with fallback to polynomial regression for small datasets. Forecast visualization overlaid on historical trend with dynamic insights.
+
 ## Next BI Enhancements
 
-1. Add forecast models for monthly revenue.
-2. Introduce cohort analysis for customer behavior.
+1. Add confidence intervals to forecast models
+2. Introduce cohort analysis for customer behavior
+3. Add testing infrastructure (unit tests for KPI calculations and forecast accuracy)
 3. Publish report outputs to a BI tool (Power BI/Tableau/Looker).

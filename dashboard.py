@@ -12,6 +12,7 @@ from bi_utils import (
     compute_kpis,
     correlation_matrix,
     discount_impact,
+    forecast_monthly_revenue,
     format_currency,
     format_number,
     load_data_with_quality,
@@ -96,6 +97,20 @@ def overview_insights(trend: pd.DataFrame, cat: pd.DataFrame, region: pd.DataFra
             mom_change = ((latest_rev - prev_rev) / prev_rev * 100) if prev_rev > 0 else 0
             direction = "↑ increased" if mom_change > 0 else "↓ decreased"
             insights.append(f"Latest month revenue {direction} by {abs(mom_change):.1f}% month-over-month.")
+        
+        # Add forecast insight
+        try:
+            trend_with_forecast = forecast_monthly_revenue(trend, periods=3)
+            forecast_data = trend_with_forecast[trend_with_forecast["is_forecast"]]
+            if not forecast_data.empty:
+                avg_forecast = forecast_data["total_revenue"].mean()
+                forecast_change = ((avg_forecast - latest_rev) / latest_rev * 100) if latest_rev > 0 else 0
+                forecast_direction = "growth" if forecast_change > 0 else "decline"
+                insights.append(
+                    f"3-month forecast predicts {forecast_direction}: expected avg revenue {forecast_change:+.1f}% vs latest month."
+                )
+        except Exception:
+            pass
 
     if not region.empty:
         best_region = region.iloc[0]
@@ -200,21 +215,49 @@ def render_overview_tab(df: pd.DataFrame) -> None:
         trend = trend.copy()
         trend["order_month_dt"] = pd.to_datetime(trend["order_month"] + "-01")
 
+        # Add revenue forecast
+        trend_with_forecast = forecast_monthly_revenue(trend, periods=3)
+        trend_with_forecast["order_month_dt"] = pd.to_datetime(trend_with_forecast["order_month"] + "-01")
+        
+        historical = trend_with_forecast[~trend_with_forecast["is_forecast"]]
+        forecast_data = trend_with_forecast[trend_with_forecast["is_forecast"]]
+
         fig_trend = make_subplots(specs=[[{"secondary_y": True}]])
+        
+        # Historical revenue
         fig_trend.add_trace(
             go.Scatter(
-                x=trend["order_month_dt"],
-                y=trend["total_revenue"],
-                name="Revenue",
+                x=historical["order_month_dt"],
+                y=historical["total_revenue"],
+                name="Revenue (Historical)",
                 mode="lines+markers",
                 line={"width": 3, "color": "#0b6e4f"},
             ),
             secondary_y=False,
         )
+        
+        # Forecast revenue
+        if not forecast_data.empty:
+            combined_for_forecast = pd.concat([
+                historical.tail(1),
+                forecast_data,
+            ], ignore_index=True)
+            fig_trend.add_trace(
+                go.Scatter(
+                    x=combined_for_forecast["order_month_dt"],
+                    y=combined_for_forecast["total_revenue"],
+                    name="Revenue (Forecast)",
+                    mode="lines+markers",
+                    line={"width": 3, "color": "#c8553d", "dash": "dash"},
+                ),
+                secondary_y=False,
+            )
+        
+        # Orders bars
         fig_trend.add_trace(
             go.Bar(
-                x=trend["order_month_dt"],
-                y=trend["total_orders"],
+                x=historical["order_month_dt"],
+                y=historical["total_orders"],
                 name="Orders",
                 marker_color="#f4a259",
                 opacity=0.55,
@@ -222,7 +265,7 @@ def render_overview_tab(df: pd.DataFrame) -> None:
             secondary_y=True,
         )
         fig_trend.update_layout(
-            title="Monthly Revenue (line) vs Orders (bars)",
+            title="Monthly Revenue (line) vs Orders (bars) + 3-Month Forecast",
             legend={"orientation": "h", "y": 1.12, "x": 0},
         )
         fig_trend.update_yaxes(title_text="Revenue", secondary_y=False)

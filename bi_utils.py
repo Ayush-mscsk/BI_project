@@ -5,6 +5,7 @@ from typing import Iterable
 
 import numpy as np
 import pandas as pd
+from statsmodels.tsa.holtwinters import ExponentialSmoothing
 
 
 EXPECTED_COLUMNS = [
@@ -331,6 +332,73 @@ def correlation_matrix(df: pd.DataFrame) -> pd.DataFrame:
     corr = df[numeric_cols].corr(numeric_only=True)
     return corr
 
+
+def forecast_monthly_revenue(trend: pd.DataFrame, periods: int = 3) -> pd.DataFrame:
+    """
+    Forecast monthly revenue using exponential smoothing.
+    
+    Args:
+        trend: DataFrame with order_month and total_revenue columns (from monthly_revenue_trend)
+        periods: Number of months to forecast (default 3)
+    
+    Returns:
+        DataFrame with historical data + forecast rows
+    """
+    if len(trend) < 2:
+        return trend
+    
+    try:
+        # Convert month string to datetime for proper ordering
+        trend_copy = trend.copy()
+        trend_copy["order_month_dt"] = pd.to_datetime(trend_copy["order_month"] + "-01")
+        trend_copy = trend_copy.sort_values("order_month_dt")
+        
+        revenue_series = trend_copy["total_revenue"].values
+        
+        # Use exponential smoothing for forecast
+        if len(revenue_series) >= 4:
+            model = ExponentialSmoothing(
+                revenue_series,
+                trend="add",
+                seasonal=None,
+                initialization_method="estimated",
+            )
+            fitted = model.fit(optimized=True)
+            forecast_values = fitted.forecast(steps=periods)
+        else:
+            # Fallback to simple linear trend for small datasets
+            x = np.arange(len(revenue_series))
+            z = np.polyfit(x, revenue_series, 1)
+            p = np.poly1d(z)
+            last_idx = len(revenue_series) - 1
+            forecast_values = p(np.arange(last_idx + 1, last_idx + 1 + periods))
+        
+        # Ensure no negative forecasts
+        forecast_values = np.maximum(forecast_values, 0)
+        
+        # Build forecast dataframe
+        last_date = trend_copy["order_month_dt"].max()
+        forecast_dates = pd.date_range(start=last_date + pd.DateOffset(months=1), periods=periods, freq="MS")
+        forecast_months = forecast_dates.strftime("%Y-%m").tolist()
+        
+        forecast_df = pd.DataFrame({
+            "order_month": forecast_months,
+            "total_revenue": forecast_values,
+            "is_forecast": True,
+        })
+        
+        # Keep all original columns for historical data, add NaN for forecast
+        historical_cols = [c for c in trend_copy.columns if c != "order_month_dt"]
+        result = pd.concat([
+            trend_copy[historical_cols].assign(is_forecast=False),
+            forecast_df.assign(total_orders=np.nan),
+        ], ignore_index=True)
+        
+        return result
+    
+    except Exception:
+        # Fallback: return original trend if forecast fails
+        return trend.assign(is_forecast=False)
 
 
 def format_currency(value: float) -> str:
