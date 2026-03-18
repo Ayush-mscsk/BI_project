@@ -78,6 +78,115 @@ def render_kpi_row(df: pd.DataFrame) -> None:
     bot3.metric("Avg Rating", f"{kpis.average_rating:.2f}/5")
 
 
+def overview_insights(trend: pd.DataFrame, cat: pd.DataFrame, region: pd.DataFrame) -> list[str]:
+    """Generate key insights for Executive Overview tab."""
+    insights = []
+
+    if not cat.empty and cat["total_revenue"].sum() > 0:
+        top_cat = cat.iloc[0]
+        revenue_share = (top_cat["total_revenue"] / cat["total_revenue"].sum() * 100)
+        insights.append(
+            f"Top category '{top_cat['product_category']}' drives {revenue_share:.1f}% of revenue."
+        )
+
+    if len(trend) >= 2:
+        latest_rev = trend.iloc[-1]["total_revenue"]
+        prev_rev = trend.iloc[-2]["total_revenue"]
+        if latest_rev > 0:
+            mom_change = ((latest_rev - prev_rev) / prev_rev * 100) if prev_rev > 0 else 0
+            direction = "↑ increased" if mom_change > 0 else "↓ decreased"
+            insights.append(f"Latest month revenue {direction} by {abs(mom_change):.1f}% month-over-month.")
+
+    if not region.empty:
+        best_region = region.iloc[0]
+        worst_region = region.iloc[-1]
+        rating_gap = best_region["avg_rating"] - worst_region["avg_rating"]
+        if rating_gap >= 0.5:
+            insights.append(
+                f"Customer satisfaction gap: {best_region['customer_region']} ({best_region['avg_rating']:.2f}) outperforms "
+                f"{worst_region['customer_region']} ({worst_region['avg_rating']:.2f}) by {rating_gap:.2f} points."
+            )
+
+    return insights
+
+
+def product_customer_insights(df: pd.DataFrame, metric_mode: str) -> list[str]:
+    """Generate key insights for Product & Customer tab."""
+    insights = []
+
+    cat_perf = category_performance(df)
+    if not cat_perf.empty:
+        high_vol = cat_perf[cat_perf["total_units"] > cat_perf["total_units"].quantile(0.75)]
+        if len(high_vol) > 0:
+            insights.append(
+                f"{len(high_vol)} categories achieve high unit volume; "
+                f"{high_vol.iloc[0]['product_category']} leads with {format_number(high_vol.iloc[0]['total_units'])} units."
+            )
+
+    payment_dist = df.groupby("payment_method")["order_id"].nunique().sort_values(ascending=False)
+    if len(payment_dist) > 1:
+        dominant = payment_dist.iloc[0]
+        second = payment_dist.iloc[1]
+        pct_diff = ((dominant - second) / second * 100) if second > 0 else 0
+        insights.append(
+            f"Payment preference: {payment_dist.index[0]} dominates with "
+            f"{pct_diff:.1f}% more orders than {payment_dist.index[1]}."
+        )
+
+    region_category = df.groupby(["customer_region", "product_category"])["order_id"].nunique().unstack(fill_value=0)
+    if not region_category.empty:
+        zero_combos = (region_category == 0).sum().sum()
+        total_combos = region_category.size
+        penetration = ((total_combos - zero_combos) / total_combos * 100)
+        if penetration < 100:
+            insights.append(
+                f"Market penetration: {penetration:.0f}% of region-category combos have sales. "
+                f"Opportunity to expand into {int(zero_combos)} underserved markets."
+            )
+
+    return insights
+
+
+def discount_insights(df: pd.DataFrame, impact: pd.DataFrame) -> list[str]:
+    """Generate key insights for Discount Analysis tab."""
+    insights = []
+
+    if not impact.empty:
+        impact_sorted = impact.sort_values("avg_revenue_per_order", ascending=False)
+        best_band = impact_sorted.iloc[0]
+        worst_band = impact_sorted.iloc[-1]
+        yield_diff = best_band["avg_revenue_per_order"] - worst_band["avg_revenue_per_order"]
+        
+        best_yield = best_band["avg_revenue_per_order"]
+        worst_yield = worst_band["avg_revenue_per_order"]
+        best_name = best_band["discount_band"]
+        worst_name = worst_band["discount_band"]
+        
+        insight_txt = f"Discount yield: {best_name} band generates {best_yield:.2f}/order vs {worst_name} at {worst_yield:.2f}/order (difference: {yield_diff:.2f})."
+        insights.append(insight_txt)
+
+        volume_boost = impact.sort_values("total_units", ascending=False).iloc[0]
+        no_discount = impact[impact["discount_band"] == "0%"]
+        if not no_discount.empty:
+            base_units_per_order = no_discount.iloc[0]["total_units"] / no_discount.iloc[0]["order_count"] if no_discount.iloc[0]["order_count"] > 0 else 0
+            boost_units_per_order = volume_boost["total_units"] / volume_boost["order_count"] if volume_boost["order_count"] > 0 else 0
+            if boost_units_per_order > base_units_per_order:
+                pct_boost = ((boost_units_per_order - base_units_per_order) / base_units_per_order * 100) if base_units_per_order > 0 else 0
+                boost_band = volume_boost["discount_band"]
+                insight_txt2 = f"Volume driver: {boost_band} band increases units-per-order by {pct_boost:.0f}% vs no-discount."
+                insights.append(insight_txt2)
+
+    return insights
+
+
+def display_insights(insights: list[str]) -> None:
+    """Display insights as formatted bullet points."""
+    if insights:
+        st.markdown("**Key Insights:**")
+        for insight in insights:
+            st.markdown(f"• {insight}")
+
+
 def render_overview_tab(df: pd.DataFrame) -> None:
     st.subheader("Revenue and Demand Overview")
 
@@ -184,6 +293,10 @@ def render_overview_tab(df: pd.DataFrame) -> None:
     fig_region.update_geos(showcoastlines=True, coastlinecolor="LightGray", showcountries=True)
     st.plotly_chart(fig_region, use_container_width=True)
 
+    st.divider()
+    insights = overview_insights(trend, cat, region)
+    display_insights(insights)
+
 
 def render_product_customer_tab(df: pd.DataFrame) -> None:
     st.subheader("Product and Customer Insights")
@@ -266,6 +379,10 @@ def render_product_customer_tab(df: pd.DataFrame) -> None:
     )
     st.plotly_chart(fig_heatmap, use_container_width=True)
 
+    st.divider()
+    insights = product_customer_insights(df, metric_mode)
+    display_insights(insights)
+
 
 def render_discount_tab(df: pd.DataFrame) -> None:
     st.subheader("Discount and Revenue Impact")
@@ -328,6 +445,10 @@ def render_discount_tab(df: pd.DataFrame) -> None:
         color_continuous_scale="RdBu",
     )
     st.plotly_chart(fig_corr, use_container_width=True)
+
+    st.divider()
+    insights = discount_insights(df, impact)
+    display_insights(insights)
 
 
 def render_export_tab(df: pd.DataFrame) -> None:
